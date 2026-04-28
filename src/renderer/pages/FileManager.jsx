@@ -3,7 +3,7 @@ import { Card, Table, Button, Space, Input, message, Empty, Popconfirm, Breadcru
 import {
   FolderOutlined, FileOutlined, PlusOutlined, DeleteOutlined,
   EditOutlined, ArrowLeftOutlined,
-} from 'antd/icons';
+} from '@ant-design/icons';
 import { safeCall } from '../utils/ipcHelper';
 import CardIcon from '../components/CardIcon';
 
