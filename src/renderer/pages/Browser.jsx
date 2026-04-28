@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Button, Space, Tabs, Dropdown, Spin, Tooltip, Empty, message, Tag,
+  Button, Space, Tabs, Dropdown, Spin, Tooltip, Empty, message, Tag, Badge, Progress, Drawer,
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, ArrowLeftOutlined, ArrowRightOutlined,
   HomeOutlined, LockOutlined, GlobalOutlined, StarOutlined,
-  CloseCircleOutlined, CopyOutlined,
+  CloseCircleOutlined, CopyOutlined, SearchOutlined, ZoomInOutlined,
+  ZoomOutOutlined, FullscreenOutlined, FullscreenExitOutlined,
+  PrinterOutlined, BugOutlined, DownloadOutlined, BellOutlined,
+  CloseOutlined, ArrowUpOutlined, ArrowDownOutlined,
 } from '@ant-design/icons';
 import ContainerDot from '../components/ContainerDot';
 
@@ -25,18 +28,38 @@ export default function Browser() {
   const [address, setAddress] = useState('');
   const [containers, setContainers] = useState([]);
   const [searchEngine, setSearchEngine] = useState('google');
+  const [zoomLevel, setZoomLevel] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [findVisible, setFindVisible] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [downloads, setDownloads] = useState([]);
+  const [downloadDrawerOpen, setDownloadDrawerOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [bookmarks, setBookmarks] = useState([]);
   const activeTabKeyRef = useRef(null);
+  const findInputRef = useRef(null);
+
   useEffect(() => { activeTabKeyRef.current = activeTabKey; }, [activeTabKey]);
 
   // ========== 初始化 ==========
   useEffect(() => {
     loadContainers();
     loadHomepage().then((home) => addNewTab(home));
+    loadBookmarks();
+
     window.electronAPI?.getSettings?.().then((s) => {
       if (s?.searchEngine) setSearchEngine(s.searchEngine);
     }).catch(() => {});
 
-    // 监听 BrowserView 事件
+    // 尝试恢复会话
+    window.electronAPI?.bvLoadSession?.().then((session) => {
+      if (session?.tabs?.length > 0) {
+        // 会话恢复由首页加载替代，此处记录
+        console.log('[会话] 发现保存的标签:', session.tabs.length);
+      }
+    }).catch(() => {});
+
+    // ========== BrowserView 事件监听 ==========
     window.electronAPI?.onBvTitleUpdated?.(({ tabId, title }) => {
       setTabs((prev) => prev.map((t) => t.key === tabId ? { ...t, title } : t));
     });
@@ -49,7 +72,6 @@ export default function Browser() {
     window.electronAPI?.onBvNavigated?.(({ tabId, url, canGoBack, canGoForward }) => {
       setTabs((prev) => prev.map((t) => t.key === tabId ? { ...t, url, canGoBack, canGoForward } : t));
       if (tabId === activeTabKeyRef.current) setAddress(url);
-      // 记录历史
       window.electronAPI?.addHistory?.({ url, title: url });
     });
     window.electronAPI?.onBvLoadError?.(({ tabId, errorDesc }) => {
@@ -63,21 +85,106 @@ export default function Browser() {
       message.warning('页面崩溃，正在恢复...');
       setTabs((prev) => prev.map((t) => t.key === tabId ? { ...t, isLoading: true, title: '正在恢复...' } : t));
       setTimeout(() => {
-        const tab = tabs.find((t) => t.key === tabId);
+        const tab = tabsRef.current.find((t) => t.key === tabId);
         if (tab?.url) window.electronAPI?.navigateBrowserView?.(tabId, tab.url);
       }, 1000);
     });
+    window.electronAPI?.onBvFullscreen?.(({ fullscreen }) => setIsFullscreen(fullscreen));
+
+    // 下载事件
+    window.electronAPI?.onBvDownloadStarted?.((dl) => {
+      setDownloads((prev) => [dl, ...prev.filter((d) => d.id !== dl.id)]);
+      message.info(`开始下载: ${dl.filename}`);
+    });
+    window.electronAPI?.onBvDownloadProgress?.((dl) => {
+      setDownloads((prev) => prev.map((d) => d.id === dl.id ? { ...d, ...dl } : d));
+    });
+    window.electronAPI?.onBvDownloadCompleted?.((dl) => {
+      setDownloads((prev) => prev.map((d) => d.id === dl.id ? { ...d, ...dl } : d));
+      if (dl.state === 'completed') message.success(`下载完成: ${dl.filename}`);
+    });
+
+    // 通知事件
+    window.electronAPI?.onBvNotification?.((n) => {
+      setNotifications((prev) => [n, ...prev].slice(0, 50));
+    });
+
+    // ========== 菜单快捷键事件 ==========
+    window.electronAPI?.onMenuNewTab?.(() => addNewTab());
+    window.electronAPI?.onMenuCloseTab?.(() => { if (activeTabKey) closeTab(activeTabKey); });
+    window.electronAPI?.onMenuReload?.(() => handleReload());
+    window.electronAPI?.onMenuForceReload?.(() => { window.electronAPI?.bvReload?.(activeTabKey); });
+    window.electronAPI?.onMenuZoomIn?.(() => handleZoomIn());
+    window.electronAPI?.onMenuZoomOut?.(() => handleZoomOut());
+    window.electronAPI?.onMenuZoomReset?.(() => handleZoomReset());
+    window.electronAPI?.onMenuFind?.(() => { setFindVisible(true); setTimeout(() => findInputRef.current?.focus(), 100); });
+    window.electronAPI?.onMenuDevtools?.(() => window.electronAPI?.bvToggleDevtools?.(activeTabKey));
+    window.electronAPI?.onMenuFullscreen?.(() => window.electronAPI?.bvToggleFullscreen?.());
+    window.electronAPI?.onMenuGoBack?.(() => handleGoBack());
+    window.electronAPI?.onMenuGoForward?.(() => handleGoForward());
+    window.electronAPI?.onMenuHistory?.(() => { window.location.hash = '#/history'; });
+    window.electronAPI?.onMenuPrint?.(() => window.electronAPI?.bvPrint?.(activeTabKey));
+    window.electronAPI?.onMenuAbout?.(() => {
+      message.info('Multi-User Browser v2 — 基于 Electron BrowserView');
+    });
+
+    // ========== 键盘快捷键 ==========
+    const handleKeyDown = (e) => {
+      // Ctrl+T 新标签
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') { e.preventDefault(); addNewTab(); }
+      // Ctrl+W 关闭标签
+      if ((e.ctrlKey || e.metaKey) && e.key === 'w') { e.preventDefault(); if (activeTabKey) closeTab(activeTabKey); }
+      // Ctrl+L 聚焦地址栏
+      if ((e.ctrlKey || e.metaKey) && e.key === 'l') { e.preventDefault(); document.querySelector('.mub-address-input')?.focus(); }
+      // Ctrl+F 查找
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); setFindVisible(true); setTimeout(() => findInputRef.current?.focus(), 100); }
+      // Escape 关闭查找
+      if (e.key === 'Escape') { setFindVisible(false); setFindText(''); window.electronAPI?.bvStopFind?.(activeTabKey, 'clearSelection'); }
+      // Ctrl+Tab 下一个标签 / Ctrl+Shift+Tab 上一个标签
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
+        e.preventDefault();
+        const idx = tabs.findIndex((t) => t.key === activeTabKey);
+        if (idx !== -1) {
+          const next = e.shiftKey
+            ? tabs[(idx - 1 + tabs.length) % tabs.length]
+            : tabs[(idx + 1) % tabs.length];
+          switchTab(next.key);
+        }
+      }
+      // Ctrl+1-9 切换到第N个标签
+      if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+        e.preventDefault();
+        const idx = parseInt(e.key) - 1;
+        if (idx < tabs.length) switchTab(tabs[idx].key);
+      }
+      // F5 刷新
+      if (e.key === 'F5') { e.preventDefault(); handleReload(); }
+      // F11 全屏
+      if (e.key === 'F11') { e.preventDefault(); window.electronAPI?.bvToggleFullscreen?.(); }
+      // F12 DevTools
+      if (e.key === 'F12') { e.preventDefault(); window.electronAPI?.bvToggleDevtools?.(activeTabKey); }
+      // Alt+Left/Right 前进后退
+      if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); handleGoBack(); }
+      if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); handleGoForward(); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.electronAPI?.removeAllListeners?.('bv:title-updated');
-      window.electronAPI?.removeAllListeners?.('bv:favicon-updated');
-      window.electronAPI?.removeAllListeners?.('bv:loading');
-      window.electronAPI?.removeAllListeners?.('bv:navigated');
-      window.electronAPI?.removeAllListeners?.('bv:load-error');
-      window.electronAPI?.removeAllListeners?.('bv:open-new-tab');
-      window.electronAPI?.removeAllListeners?.('bv:crashed');
+      window.removeEventListener('keydown', handleKeyDown);
+      ['bv:title-updated', 'bv:favicon-updated', 'bv:loading', 'bv:navigated',
+       'bv:load-error', 'bv:open-new-tab', 'bv:crashed', 'bv:fullscreen',
+       'bv:download-started', 'bv:download-progress', 'bv:download-completed',
+       'bv:notification'].forEach((ch) => window.electronAPI?.removeAllListeners?.(ch));
+      ['menu:new-tab', 'menu:close-tab', 'menu:reload', 'menu:force-reload',
+       'menu:zoom-in', 'menu:zoom-out', 'menu:zoom-reset', 'menu:find',
+       'menu:devtools', 'menu:fullscreen', 'menu:go-back', 'menu:go-forward',
+       'menu:history', 'menu:print', 'menu:about'].forEach((ch) => window.electronAPI?.removeAllListeners?.(ch));
     };
   }, []);
+
+  // tabs ref for event handlers
+  const tabsRef = useRef(tabs);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
   // ========== 数据加载 ==========
   const loadContainers = async () => {
@@ -90,7 +197,25 @@ export default function Browser() {
     catch { return 'about:blank'; }
   };
 
-  // ========== 标签管理（通过 IPC 操作主进程 BrowserView） ==========
+  const loadBookmarks = async () => {
+    try { setBookmarks((await window.electronAPI.getBookmarks()) || []); }
+    catch {}
+  };
+
+  // ========== 会话保存 ==========
+  const saveSession = useCallback(() => {
+    const sessionTabs = tabs.map((t) => ({
+      key: t.key, url: t.url, containerId: t.containerId, title: t.title,
+    }));
+    window.electronAPI?.bvSaveSession?.(sessionTabs);
+  }, [tabs]);
+
+  // 标签变化时自动保存
+  useEffect(() => {
+    if (tabs.length > 0) saveSession();
+  }, [tabs, saveSession]);
+
+  // ========== 标签管理 ==========
 
   const addNewTab = useCallback(async (url = NEW_TAB_URL, containerId = 'default') => {
     const key = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -105,7 +230,6 @@ export default function Browser() {
     setActiveTabKey(key);
     setAddress(url === NEW_TAB_URL ? '' : url);
 
-    // 通知主进程创建 BrowserView
     if (url !== NEW_TAB_URL && url !== 'about:blank') {
       await window.electronAPI.createBrowserView(key, url, containerId);
     }
@@ -128,14 +252,12 @@ export default function Browser() {
         const newActive = next[newIdx].key;
         setActiveTabKey(newActive);
         setAddress(next[newIdx].url === NEW_TAB_URL ? '' : next[newIdx].url);
-        // 切换到新活跃标签的 BrowserView
         window.electronAPI.switchBrowserView(newActive);
       }
 
       return next;
     });
 
-    // 通知主进程销毁 BrowserView
     await window.electronAPI.closeBrowserView(targetKey);
   }, [activeTabKey, addNewTab]);
 
@@ -144,8 +266,10 @@ export default function Browser() {
     const tab = tabs.find((t) => t.key === key);
     if (tab) {
       setAddress(tab.url === NEW_TAB_URL ? '' : tab.url);
-      // 通知主进程切换 BrowserView
       await window.electronAPI.switchBrowserView(key);
+      // 更新缩放
+      const zoom = await window.electronAPI?.bvGetZoom?.(key);
+      if (zoom !== undefined) setZoomLevel(zoom);
     }
   }, [tabs]);
 
@@ -154,7 +278,6 @@ export default function Browser() {
     setTabs((prev) => prev.map((t) =>
       t.key === tabKey ? { ...t, containerId, containerName: container.name, containerColor: container.color } : t
     ));
-    // 容器切换需要重建 BrowserView
     const tab = tabs.find((t) => t.key === tabKey);
     if (tab && tab.url !== NEW_TAB_URL && tab.url !== 'about:blank') {
       window.electronAPI.closeBrowserView(tabKey);
@@ -162,7 +285,7 @@ export default function Browser() {
     }
   }, [tabs, containers]);
 
-  // ========== 导航操作（通过 IPC 控制主进程 BrowserView） ==========
+  // ========== 导航 ==========
 
   const handleNavigate = useCallback((input) => {
     if (!input.trim()) return;
@@ -178,12 +301,10 @@ export default function Browser() {
     setTabs((prev) => prev.map((t) => t.key === activeTabKey ? { ...t, url, isLoading: true } : t));
     setAddress(url);
 
-    // 通过 IPC 让主进程 BrowserView 导航
     const tab = tabs.find((t) => t.key === activeTabKey);
     if (tab && tab.url !== NEW_TAB_URL && tab.url !== 'about:blank') {
       window.electronAPI.navigateBrowserView(activeTabKey, url);
     } else {
-      // 从空白页导航 → 需要创建 BrowserView
       window.electronAPI.createBrowserView(activeTabKey, url, tab?.containerId || 'default');
     }
   }, [activeTabKey, searchEngine, tabs]);
@@ -194,16 +315,58 @@ export default function Browser() {
   const handleStop = useCallback(() => { window.electronAPI.bvStop(activeTabKey); }, [activeTabKey]);
   const handleGoHome = useCallback(async () => { handleNavigate(await loadHomepage()); }, [handleNavigate]);
 
+  // ========== 缩放 ==========
+  const handleZoomIn = useCallback(async () => {
+    await window.electronAPI?.bvZoomIn?.(activeTabKey);
+    const zoom = await window.electronAPI?.bvGetZoom?.(activeTabKey);
+    setZoomLevel(zoom || 0);
+  }, [activeTabKey]);
+
+  const handleZoomOut = useCallback(async () => {
+    await window.electronAPI?.bvZoomOut?.(activeTabKey);
+    const zoom = await window.electronAPI?.bvGetZoom?.(activeTabKey);
+    setZoomLevel(zoom || 0);
+  }, [activeTabKey]);
+
+  const handleZoomReset = useCallback(async () => {
+    await window.electronAPI?.bvZoomReset?.(activeTabKey);
+    setZoomLevel(0);
+  }, [activeTabKey]);
+
+  // ========== 查找 ==========
+  const handleFind = useCallback((text, forward = true) => {
+    if (text) {
+      window.electronAPI?.bvFindInPage?.(activeTabKey, text, forward);
+    } else {
+      window.electronAPI?.bvStopFind?.(activeTabKey, 'clearSelection');
+    }
+  }, [activeTabKey]);
+
+  const handleFindKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') {
+      handleFind(findText, !e.shiftKey);
+    }
+    if (e.key === 'Escape') {
+      setFindVisible(false);
+      setFindText('');
+      window.electronAPI?.bvStopFind?.(activeTabKey, 'clearSelection');
+    }
+  }, [findText, activeTabKey, handleFind]);
+
+  // ========== 书签 ==========
   const handleBookmark = useCallback(async () => {
     const tab = tabs.find((t) => t.key === activeTabKey);
     if (!tab || tab.url === NEW_TAB_URL || tab.url === 'about:blank') { message.warning('无法收藏空白页'); return; }
     try {
       await window.electronAPI.saveBookmark({ title: tab.title, url: tab.url, favicon: tab.favicon });
       message.success('已添加书签');
+      loadBookmarks();
     } catch { message.error('收藏失败'); }
   }, [tabs, activeTabKey]);
 
-  // ========== 地址栏快捷键 ==========
+  const isBookmarked = bookmarks.some((b) => b.url === tabs.find((t) => t.key === activeTabKey)?.url);
+
+  // ========== 地址栏 ==========
   const handleAddressKeyDown = useCallback((e) => {
     if (e.key === 'Enter') handleNavigate(address);
     if (e.key === 'Escape') { const tab = tabs.find((t) => t.key === activeTabKey); if (tab) setAddress(tab.url === NEW_TAB_URL ? '' : tab.url); }
@@ -221,7 +384,8 @@ export default function Browser() {
       { key: 'container', label: '切换身份', children: containerItems },
       { type: 'divider' },
       { key: 'close-others', label: '关闭其他标签', icon: <CloseCircleOutlined />, onClick: () => {
-        setTabs((prev) => prev.filter((t) => t.key === key));
+        const keep = tabs.find((t) => t.key === key);
+        setTabs(keep ? [keep] : []);
         setActiveTabKey(key);
       }},
       { key: 'close-right', label: '关闭右侧标签', onClick: () => {
@@ -232,9 +396,27 @@ export default function Browser() {
     ];
   }, [tabs, containers, addNewTab, setTabContainer]);
 
+  // ========== 下载格式化 ==========
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+  };
+
+  const formatSpeed = (received, startTime) => {
+    if (!received || !startTime) return '';
+    const elapsed = (Date.now() - startTime) / 1000;
+    if (elapsed < 1) return '';
+    return `${formatBytes(received / elapsed)}/s`;
+  };
+
   // ========== 渲染 ==========
   const activeTab = tabs.find((t) => t.key === activeTabKey);
   const isSecure = activeTab?.url?.startsWith('https://');
+  const activeDownloads = downloads.filter((d) => d.state === 'downloading');
+  const zoomPercent = Math.round(Math.pow(1.2, zoomLevel) * 100);
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -284,34 +466,32 @@ export default function Browser() {
 
       {/* ─── 导航栏 ─── */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 14px',
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 12px',
         borderBottom: '1px solid var(--mub-border-light)',
         background: '#fff',
       }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 2,
-          background: 'var(--mub-bg)', borderRadius: 8, padding: 2,
-        }}>
-          <Tooltip title="后退">
+        {/* 导航按钮 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 1, background: 'var(--mub-bg)', borderRadius: 8, padding: 2 }}>
+          <Tooltip title="后退 (Alt+←)">
             <Button size="small" type="text" icon={<ArrowLeftOutlined />}
               disabled={!activeTab?.canGoBack} onClick={handleGoBack}
-              style={{ borderRadius: 6, width: 30, height: 30 }} />
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
           </Tooltip>
-          <Tooltip title="前进">
+          <Tooltip title="前进 (Alt+→)">
             <Button size="small" type="text" icon={<ArrowRightOutlined />}
               disabled={!activeTab?.canGoForward} onClick={handleGoForward}
-              style={{ borderRadius: 6, width: 30, height: 30 }} />
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
           </Tooltip>
-          <Tooltip title={activeTab?.isLoading ? '停止' : '刷新'}>
+          <Tooltip title={activeTab?.isLoading ? '停止' : '刷新 (F5)'}>
             <Button size="small" type="text"
               icon={<ReloadOutlined spin={activeTab?.isLoading} />}
               onClick={activeTab?.isLoading ? handleStop : handleReload}
-              style={{ borderRadius: 6, width: 30, height: 30 }} />
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
           </Tooltip>
           <Tooltip title="主页">
             <Button size="small" type="text" icon={<HomeOutlined />} onClick={handleGoHome}
-              style={{ borderRadius: 6, width: 30, height: 30 }} />
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
           </Tooltip>
         </div>
 
@@ -326,7 +506,7 @@ export default function Browser() {
           }}
           trigger={['click']}
         >
-          <Tooltip title="切换当前标签身份">
+          <Tooltip title="切换身份">
             <Tag style={{
               cursor: 'pointer', margin: 0, borderRadius: 16,
               lineHeight: '22px', padding: '1px 10px',
@@ -352,11 +532,12 @@ export default function Browser() {
             : <GlobalOutlined style={{ color: 'var(--mub-text-muted)', fontSize: 12, marginRight: 6 }} />
           }
           <input
+            className="mub-address-input"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             onKeyDown={handleAddressKeyDown}
             onFocus={(e) => e.target.select()}
-            placeholder="输入网址或搜索..."
+            placeholder="输入网址或搜索... (Ctrl+L)"
             style={{
               flex: 1, border: 'none', outline: 'none', background: 'transparent',
               fontSize: 13, color: 'var(--mub-text)', lineHeight: '32px',
@@ -364,41 +545,185 @@ export default function Browser() {
           />
         </div>
 
-        <Tooltip title="收藏">
-          <Button size="small" type="text" icon={<StarOutlined />} onClick={handleBookmark}
-            style={{ borderRadius: 6, width: 32, height: 32 }} />
-        </Tooltip>
+        {/* 工具按钮组 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Tooltip title={isBookmarked ? '已收藏' : '收藏'}>
+            <Button size="small" type="text"
+              icon={<StarOutlined style={{ color: isBookmarked ? '#faad14' : undefined }} />}
+              onClick={handleBookmark}
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
+          </Tooltip>
+
+          <Tooltip title={`缩放 ${zoomPercent}%`}>
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'in', label: '放大', icon: <ZoomInOutlined />, onClick: handleZoomIn },
+                  { key: 'out', label: '缩小', icon: <ZoomOutOutlined />, onClick: handleZoomOut },
+                  { key: 'reset', label: '重置 (100%)', onClick: handleZoomReset },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button size="small" type="text"
+                icon={<span style={{ fontSize: 11, fontWeight: 600 }}>{zoomPercent}%</span>}
+                style={{ borderRadius: 6, width: 40, height: 28, fontSize: 11 }} />
+            </Dropdown>
+          </Tooltip>
+
+          <Tooltip title="下载管理">
+            <Badge count={activeDownloads.length} size="small" offset={[-4, 4]}>
+              <Button size="small" type="text" icon={<DownloadOutlined />}
+                onClick={() => setDownloadDrawerOpen(true)}
+                style={{ borderRadius: 6, width: 28, height: 28 }} />
+            </Badge>
+          </Tooltip>
+
+          <Tooltip title="开发者工具 (F12)">
+            <Button size="small" type="text" icon={<BugOutlined />}
+              onClick={() => window.electronAPI?.bvToggleDevtools?.(activeTabKey)}
+              style={{ borderRadius: 6, width: 28, height: 28 }} />
+          </Tooltip>
+        </div>
       </div>
 
-      {/* ─── BrowserView 占位区域 ─── */}
-      {/* BrowserView 由主进程渲染，覆盖在此 div 之上 */}
+      {/* ─── 查找栏 ─── */}
+      {findVisible && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 12px',
+          background: '#f6f6f6',
+          borderBottom: '1px solid var(--mub-border-light)',
+        }}>
+          <SearchOutlined style={{ color: '#999' }} />
+          <input
+            ref={findInputRef}
+            value={findText}
+            onChange={(e) => { setFindText(e.target.value); handleFind(e.target.value); }}
+            onKeyDown={handleFindKeyDown}
+            placeholder="在页面中查找..."
+            style={{
+              flex: 1, border: 'none', outline: 'none', background: 'transparent',
+              fontSize: 13, lineHeight: '28px',
+            }}
+            autoFocus
+          />
+          <Button size="small" type="text" icon={<ArrowUpOutlined />}
+            onClick={() => handleFind(findText, false)} />
+          <Button size="small" type="text" icon={<ArrowDownOutlined />}
+            onClick={() => handleFind(findText, true)} />
+          <Button size="small" type="text" icon={<CloseOutlined />}
+            onClick={() => { setFindVisible(false); setFindText(''); window.electronAPI?.bvStopFind?.(activeTabKey, 'clearSelection'); }} />
+        </div>
+      )}
+
+      {/* ─── BrowserView 占位 ─── */}
       <div id="browser-view-host" style={{ flex: 1, position: 'relative', background: '#fff' }}>
         {tabs.length === 0 ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Empty description="点击 + 新建标签页">
+            <Empty description="点击 + 新建标签页 (Ctrl+T)">
               <Button type="primary" icon={<PlusOutlined />} onClick={() => addNewTab()}>新建标签</Button>
             </Empty>
           </div>
         ) : (
-          /* 空白页 / 新标签页 由渲染进程自己显示，有 URL 的标签由主进程 BrowserView 覆盖 */
           tabs.map((tab) => (
             tab.url === NEW_TAB_URL || tab.url === 'about:blank' ? (
               <div key={tab.key} style={{
                 display: tab.key === activeTabKey ? 'flex' : 'none',
                 width: '100%', height: '100%', flexDirection: 'column',
               }}>
-                <NewTabPage onNavigate={handleNavigate} />
+                <NewTabPage onNavigate={handleNavigate} bookmarks={bookmarks} />
               </div>
             ) : null
           ))
         )}
       </div>
+
+      {/* ─── 书签栏 ─── */}
+      {bookmarks.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          padding: '3px 12px',
+          borderTop: '1px solid var(--mub-border-light)',
+          background: '#fafafa',
+          overflow: 'auto',
+          flexShrink: 0,
+          minHeight: 28,
+        }}>
+          {bookmarks.slice(0, 20).map((b) => (
+            <Tooltip key={b.id} title={b.url}>
+              <Tag
+                style={{ cursor: 'pointer', margin: 0, fontSize: 11, padding: '0 8px', lineHeight: '20px' }}
+                onClick={() => handleNavigate(b.url)}
+              >
+                {b.favicon ? <img src={b.favicon} alt="" style={{ width: 12, height: 12, marginRight: 4, verticalAlign: 'middle' }} /> : null}
+                {b.title?.slice(0, 15) || b.url?.replace(/https?:\/\//, '').slice(0, 15)}
+              </Tag>
+            </Tooltip>
+          ))}
+        </div>
+      )}
+
+      {/* ─── 全屏提示 ─── */}
+      {isFullscreen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, height: 4,
+          background: 'var(--mub-primary)', zIndex: 9999,
+        }} />
+      )}
+
+      {/* ─── 下载抽屉 ─── */}
+      <Drawer
+        title={<span><DownloadOutlined style={{ marginRight: 8 }} />下载管理</span>}
+        placement="right"
+        width={380}
+        open={downloadDrawerOpen}
+        onClose={() => setDownloadDrawerOpen(false)}
+        extra={
+          <Button size="small" onClick={() => { window.electronAPI?.bvClearDownloads?.(); setDownloads([]); }}>
+            清空
+          </Button>
+        }
+      >
+        {downloads.length === 0 ? (
+          <Empty description="暂无下载" />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {downloads.map((dl) => (
+              <div key={dl.id} style={{
+                padding: '10px 12px', background: '#fafafa', borderRadius: 8,
+                border: '1px solid #f0f0f0',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {dl.filename}
+                  </span>
+                  <Tag color={dl.state === 'completed' ? 'success' : dl.state === 'failed' ? 'error' : 'processing'} style={{ marginLeft: 8 }}>
+                    {dl.state === 'completed' ? '完成' : dl.state === 'failed' ? '失败' : '下载中'}
+                  </Tag>
+                </div>
+                {dl.state === 'downloading' && dl.totalBytes > 0 && (
+                  <Progress
+                    percent={Math.round((dl.receivedBytes / dl.totalBytes) * 100)}
+                    size="small"
+                    status="active"
+                  />
+                )}
+                <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                  {formatBytes(dl.receivedBytes)} / {formatBytes(dl.totalBytes)}
+                  {dl.startTime && dl.state === 'downloading' && ` · ${formatSpeed(dl.receivedBytes, dl.startTime)}`}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }
 
 /* ─── 新标签页 ─── */
-function NewTabPage({ onNavigate }) {
+function NewTabPage({ onNavigate, bookmarks }) {
   const [searchValue, setSearchValue] = useState('');
   const quickLinks = [
     { title: 'Google', url: 'https://www.google.com', icon: '🔍', color: '#4285f4' },
@@ -412,9 +737,9 @@ function NewTabPage({ onNavigate }) {
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', gap: 36,
+      justifyContent: 'center', gap: 32,
       background: 'linear-gradient(160deg, #f8f9fc 0%, #eef1f6 50%, #e8ecf4 100%)',
-      padding: 48,
+      padding: 48, overflow: 'auto',
     }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{
@@ -483,6 +808,20 @@ function NewTabPage({ onNavigate }) {
           </div>
         ))}
       </div>
+
+      {/* 最近书签 */}
+      {bookmarks?.length > 0 && (
+        <div style={{ maxWidth: 480, width: '100%' }}>
+          <div style={{ fontSize: 12, color: 'var(--mub-text-muted)', marginBottom: 8 }}>最近书签</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {bookmarks.slice(0, 6).map((b) => (
+              <Tag key={b.id} style={{ cursor: 'pointer', padding: '4px 12px' }} onClick={() => onNavigate(b.url)}>
+                {b.title?.slice(0, 20) || b.url}
+              </Tag>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

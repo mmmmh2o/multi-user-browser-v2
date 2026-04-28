@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
 import { MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import NotificationBell from '../components/NotificationBell';
 import { menuItems, findMenuLabel } from '../config/menu';
 
 const SIDEBAR_WIDE = 220;
@@ -74,6 +75,7 @@ export default function MainLayout() {
       <Layout style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <Layout.Header className="mub-page-header" style={{ height: 56, flexShrink: 0 }}>
           <h2 className="mub-page-title">{findMenuLabel(location.pathname)}</h2>
+          <NotificationBell />
         </Layout.Header>
         <Layout.Content style={{
           flex: 1,
