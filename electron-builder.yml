@@ -19,3 +19,4 @@ mac:
 linux:
   target: [AppImage, deb]
   icon: build/icon.png
+  category: Network

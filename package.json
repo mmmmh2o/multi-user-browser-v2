@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "多用户并发管理浏览器 v2 - 基于 Electron BrowserView",
   "main": "src/main/index.js",
-  "author": "mmmmh2o",
+  "author": "mmmmh2o <mmmmh2o@users.noreply.github.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
