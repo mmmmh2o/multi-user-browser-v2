@@ -425,6 +425,14 @@ ipcMain.handle('bv:show-notification', (event, { title, body }) => {
   return true;
 });
 
+// BrowserView preload 的新标签页请求
+ipcMain.on('open-url-in-tab', (event, url) => {
+  log.info(`[open-url-in-tab] ${url}`);
+  if (url && mainWindow && !mainWindow.isDestroyed()) {
+    sendToRenderer('bv:open-new-tab', { url, containerId: 'default' });
+  }
+});
+
 // 获取页面信息
 ipcMain.handle('bv:get-page-info', (event, { tabId }) => {
   const entry = browserViews.get(tabId);

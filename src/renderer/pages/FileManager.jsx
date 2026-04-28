@@ -2,11 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card, Table, Button, Space, Input, message, Empty, Popconfirm, Breadcrumb } from 'antd';
 import {
   FolderOutlined, FileOutlined, PlusOutlined, DeleteOutlined,
-  EditOutlined, HomeOutlined, ArrowLeftOutlined,
+  EditOutlined, ArrowLeftOutlined,
 } from 'antd/icons';
 import { safeCall } from '../utils/ipcHelper';
 import CardIcon from '../components/CardIcon';
-import { app } from '@electron/remote';
 
 export default function FileManager() {
   const [files, setFiles] = useState([]);
@@ -16,8 +15,10 @@ export default function FileManager() {
   const [editingFile, setEditingFile] = useState(null);
 
   useEffect(() => {
-    const homeDir = window.electronAPI?.getHomeDir?.() || '/';
-    setCurrentPath(homeDir);
+    (async () => {
+      const homeDir = await safeCall(() => window.electronAPI.getHomeDir(), '/');
+      setCurrentPath(homeDir || '/');
+    })();
   }, []);
 
   const loadFiles = useCallback(async (dirPath) => {
@@ -36,7 +37,8 @@ export default function FileManager() {
 
   const handleCreateDirectory = async () => {
     if (!newName.trim()) return;
-    const newPath = `${currentPath}/${newName.trim()}`;
+    const sep = currentPath.includes('\\') ? '\\' : '/';
+    const newPath = `${currentPath}${sep}${newName.trim()}`;
     const ok = await safeCall(() => window.electronAPI.createDirectory(newPath));
     if (ok) { message.success('已创建'); setNewName(''); loadFiles(currentPath); }
   };
@@ -48,7 +50,8 @@ export default function FileManager() {
 
   const handleRename = async (oldPath) => {
     if (!editingFile?.newName) return;
-    const newPath = `${currentPath}/${editingFile.newName}`;
+    const sep = currentPath.includes('\\') ? '\\' : '/';
+    const newPath = `${currentPath}${sep}${editingFile.newName}`;
     const ok = await safeCall(() => window.electronAPI.renameFile(oldPath, newPath));
     if (ok) { message.success('已重命名'); setEditingFile(null); loadFiles(currentPath); }
   };
@@ -87,7 +90,7 @@ export default function FileManager() {
         extra={
           <Space>
             <Button icon={<ArrowLeftOutlined />} onClick={() => {
-              const parent = currentPath.split('/').slice(0, -1).join('/') || '/';
+              const parent = currentPath.replace(/[/\\][^/\\]+$/, '') || '/';
               setCurrentPath(parent);
             }} />
             <Input placeholder="新文件夹名" value={newName} onChange={(e) => setNewName(e.target.value)}
@@ -97,7 +100,7 @@ export default function FileManager() {
         }
       >
         <Breadcrumb style={{ marginBottom: 16 }} items={
-          currentPath.split('/').filter(Boolean).map((part, i, arr) => ({
+          currentPath.split(/[/\\]/).filter(Boolean).map((part, i, arr) => ({
             title: i === arr.length - 1 ? part : <a onClick={() => setCurrentPath('/' + arr.slice(0, i + 1).join('/'))}>{part}</a>,
           }))
         } />

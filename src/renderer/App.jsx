@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import MainLayout from './layouts/MainLayout';
 import Browser from './pages/Browser';
 import FileManager from './pages/FileManager';
+import DownloadManager from './pages/DownloadManager';
 import ScriptManager from './pages/ScriptManager';
 import Bookmarks from './pages/Bookmarks';
 import History from './pages/History';
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="bookmarks" element={<Bookmarks />} />
           <Route path="history" element={<History />} />
           <Route path="files" element={<FileManager />} />
+          <Route path="downloads" element={<DownloadManager />} />
           <Route path="scripts" element={<ScriptManager />} />
           <Route path="settings" element={<Settings />} />
         </Route>

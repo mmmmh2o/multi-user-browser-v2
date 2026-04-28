@@ -3,6 +3,7 @@ const log = require('electron-log');
 const handlers = [
   { name: 'container', fn: () => require('./containerHandlers').registerContainerHandlers() },
   { name: 'file', fn: () => require('./fileHandlers').registerFileHandlers() },
+  { name: 'download', fn: () => require('./downloadHandlers').registerDownloadHandlers() },
   { name: 'bookmark', fn: () => require('./bookmarkHandlers').registerBookmarkHandlers() },
   { name: 'history', fn: () => require('./historyHandlers').registerHistoryHandlers() },
   { name: 'script', fn: () => require('./scriptHandlers').registerScriptHandlers() },

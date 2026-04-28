@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ========== 通知 ==========
   bvShowNotification: (title, body) => ipcRenderer.invoke('bv:show-notification', { title, body }),
 
+  // ========== 系统 ==========
+  getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
+
   // ========== 容器管理 ==========
   getContainers: () => ipcRenderer.invoke('get-containers'),
   saveContainer: (c) => ipcRenderer.invoke('save-container', c),

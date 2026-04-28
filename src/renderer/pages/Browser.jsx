@@ -38,8 +38,10 @@ export default function Browser() {
   const [bookmarks, setBookmarks] = useState([]);
   const activeTabKeyRef = useRef(null);
   const findInputRef = useRef(null);
+  const tabsRef = useRef(tabs);
 
   useEffect(() => { activeTabKeyRef.current = activeTabKey; }, [activeTabKey]);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
   // ========== 初始化 ==========
   useEffect(() => {
@@ -181,10 +183,6 @@ export default function Browser() {
        'menu:history', 'menu:print', 'menu:about'].forEach((ch) => window.electronAPI?.removeAllListeners?.(ch));
     };
   }, []);
-
-  // tabs ref for event handlers
-  const tabsRef = useRef(tabs);
-  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
   // ========== 数据加载 ==========
   const loadContainers = async () => {

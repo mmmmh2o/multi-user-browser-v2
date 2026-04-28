@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   UserSwitchOutlined, GlobalOutlined, FolderOutlined,
-  CodeOutlined, SettingOutlined, StarOutlined, HistoryOutlined,
+  DownloadOutlined, CodeOutlined, SettingOutlined, StarOutlined, HistoryOutlined,
 } from '@ant-design/icons';
 
 export const menuGroups = [
@@ -23,6 +23,7 @@ export const menuGroups = [
     key: 'tools', label: '工具',
     items: [
       { key: '/files', icon: <FolderOutlined />, label: '文件管理' },
+      { key: '/downloads', icon: <DownloadOutlined />, label: '下载管理' },
       { key: '/scripts', icon: <CodeOutlined />, label: '脚本管理' },
     ],
   },
