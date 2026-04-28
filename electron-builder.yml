@@ -1,0 +1,21 @@
+appId: com.mmmmh2o.multi-user-browser-v2
+productName: Multi-User Browser v2
+copyright: Copyright © 2026 mmmmh2o
+directories:
+  output: dist
+  buildResources: build
+files:
+  - src/**/*
+  - "!src/renderer/**/*"
+extraResources:
+  - from: src/renderer/dist
+    to: renderer/dist
+win:
+  target: nsis
+  icon: build/icon.ico
+mac:
+  target: dmg
+  icon: build/icon.icns
+linux:
+  target: [AppImage, deb]
+  icon: build/icon.png
